@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/ctx"
+STATE_DIR="$CONFIG_ROOT/state"
+LIVE_DIR="$STATE_DIR/live"
+MONITORING_FILE="$STATE_DIR/monitoring"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/ctx-$UID}"
+SOCKET="$RUNTIME_DIR/ctxd.sock"
+
+mkdir -p "$STATE_DIR" "$LIVE_DIR" "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+
+safe_key() {
+  printf '%s' "$1" | sed -E 's/[^A-Za-z0-9._-]+/_/g'
+}
+
+capture_windows() {
+  if command -v wmctrl >/dev/null 2>&1; then
+    wmctrl -lx 2>/dev/null | jq -R -s '
+      split("\n")
+      | map(select(length > 0))
+      | map({
+          raw: .,
+          window_id: (split(" +"; "") | .[0])
+        })
+    ' 2>/dev/null || printf '[]'
+  else
+    printf '[]'
+  fi
+}
+
+capture_processes() {
+  ps -u "$USER" -o comm= 2>/dev/null | sort -u | jq -R -s '
+    split("\n") | map(select(length > 0))
+  ' 2>/dev/null || printf '[]'
+}
+
+capture_adapters() {
+  local tmp
+  tmp="$(mktemp)"
+  printf '{}' > "$tmp"
+
+  local exe key output next
+  while IFS= read -r exe; do
+    [[ -n "$exe" ]] || continue
+    key="${exe#ctx-capture-}"
+    if output="$("$exe" 2>/dev/null)" && jq -e . >/dev/null 2>&1 <<<"$output"; then
+      next="$(mktemp)"
+      jq --arg k "$key" --argjson v "$output" '. + {($k): $v}' "$tmp" > "$next"
+      mv "$next" "$tmp"
+    fi
+  done < <(compgen -c 'ctx-capture-' | sort -u || true)
+
+  cat "$tmp"
+  rm -f "$tmp"
+}
+
+live_updates_json() {
+  local tmp
+  tmp="$(mktemp)"
+  printf '{}' > "$tmp"
+
+  local file key value next
+  shopt -s nullglob
+  for file in "$LIVE_DIR"/*.json; do
+    key="$(basename "$file" .json)"
+    if jq -e . "$file" >/dev/null 2>&1; then
+      value="$(cat "$file")"
+      next="$(mktemp)"
+      jq --arg k "$key" --argjson v "$value" '. + {($k): $v}' "$tmp" > "$next"
+      mv "$next" "$tmp"
+    fi
+  done
+  shopt -u nullglob
+
+  cat "$tmp"
+  rm -f "$tmp"
+}
+
+checkpoint() {
+  local slug="$1"
+  [[ -n "$slug" ]] || return 1
+
+  local dest="$STATE_DIR/$slug"
+  mkdir -p "$dest"
+
+  local windows processes adapters updates
+  windows="$(capture_windows)"
+  processes="$(capture_processes)"
+  adapters="$(capture_adapters)"
+  updates="$(live_updates_json)"
+
+  jq -n     --arg context "$slug"     --arg captured_at "$(date --iso-8601=seconds)"     --argjson windows "$windows"     --argjson processes "$processes"     --argjson adapters "$adapters"     --argjson updates "$updates"     '{
+      context: $context,
+      captured_at: $captured_at,
+      windows: $windows,
+      processes: $processes,
+      adapters: $adapters,
+      live_updates: $updates
+    }' > "$dest/snapshot.json"
+}
+
+handle_command() {
+  local line cmd arg1 arg2
+  IFS= read -r line || true
+  IFS=$'\t' read -r cmd arg1 arg2 <<<"$line"
+
+  case "$cmd" in
+    PING)
+      printf 'PONG\n'
+      ;;
+    START)
+      [[ -n "${arg1:-}" ]] || { printf 'ERR missing context\n'; return; }
+      rm -rf "$LIVE_DIR"
+      mkdir -p "$LIVE_DIR"
+      printf '%s\n' "$arg1" > "$MONITORING_FILE"
+      printf 'OK\n'
+      ;;
+    STOP)
+      rm -f "$MONITORING_FILE"
+      rm -rf "$LIVE_DIR"
+      mkdir -p "$LIVE_DIR"
+      printf 'OK\n'
+      ;;
+    UPDATE)
+      [[ -f "$MONITORING_FILE" ]] || { printf 'IGNORED\n'; return; }
+      [[ -n "${arg1:-}" && -n "${arg2:-}" ]] || { printf 'ERR missing update data\n'; return; }
+      if ! jq -e . >/dev/null 2>&1 <<<"$arg2"; then
+        printf 'ERR invalid json\n'
+        return
+      fi
+      printf '%s\n' "$arg2" > "$LIVE_DIR/$(safe_key "$arg1").json"
+      printf 'OK\n'
+      ;;
+    CHECKPOINT)
+      [[ -n "${arg1:-}" ]] || { printf 'ERR missing context\n'; return; }
+      checkpoint "$arg1"
+      printf 'OK\n'
+      ;;
+    STATUS)
+      if [[ -f "$MONITORING_FILE" ]]; then
+        printf 'monitoring\t%s\n' "$(cat "$MONITORING_FILE")"
+      else
+        printf 'stopped\n'
+      fi
+      ;;
+    *)
+      printf 'ERR unknown command\n'
+      ;;
+  esac
+}
+
+if [[ "${1:-}" == "--handle-client" ]]; then
+  handle_command
+  exit 0
+fi
+
+command -v socat >/dev/null 2>&1 || {
+  printf 'ctxd: socat is required\n' >&2
+  exit 1
+}
+command -v jq >/dev/null 2>&1 || {
+  printf 'ctxd: jq is required\n' >&2
+  exit 1
+}
+
+rm -f "$SOCKET"
+trap 'rm -f "$SOCKET"' EXIT INT TERM
+
+SELF="$(readlink -f "$0")"
+exec socat UNIX-LISTEN:"$SOCKET",fork,mode=600 EXEC:"$SELF --handle-client"
