@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/ctx"
+PROJECT_DIR="$CONFIG_ROOT/projects"
+ARCHIVE_DIR="$CONFIG_ROOT/archived"
+STATE_DIR="$CONFIG_ROOT/state"
+CURRENT_FILE="$STATE_DIR/current"
+
+mkdir -p "$PROJECT_DIR" "$ARCHIVE_DIR" "$STATE_DIR"
+
+die() {
+  printf 'ctx: %s\n' "$*" >&2
+  exit 1
+}
+
+slugify() {
+  local value="$1"
+  value="${value,,}"
+  value="$(printf '%s' "$value" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  [[ -n "$value" ]] || value="context"
+  printf '%s\n' "$value"
+}
+
+unique_slug() {
+  local base="$1" candidate="$1" n=2
+  while [[ -e "$PROJECT_DIR/$candidate.conf" || -e "$ARCHIVE_DIR/$candidate.conf" ]]; do
+    candidate="${base}-$n"
+    ((n++))
+  done
+  printf '%s\n' "$candidate"
+}
+
+conf_path() {
+  local slug="$1"
+  if [[ -f "$PROJECT_DIR/$slug.conf" ]]; then
+    printf '%s\n' "$PROJECT_DIR/$slug.conf"
+  elif [[ -f "$ARCHIVE_DIR/$slug.conf" ]]; then
+    printf '%s\n' "$ARCHIVE_DIR/$slug.conf"
+  else
+    return 1
+  fi
+}
+
+read_name() {
+  local slug="$1" file
+  file="$(conf_path "$slug")" || return 1
+  sed -n 's/^name=//p' "$file" | head -n1
+}
+
+current_context() {
+  [[ -f "$CURRENT_FILE" ]] && cat "$CURRENT_FILE"
+}
+
+ensure_daemon() {
+  if ctxdctl ping >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v ctxd >/dev/null 2>&1; then
+    die "ctxd is not installed or not in PATH"
+  fi
+
+  nohup ctxd >/dev/null 2>&1 &
+  for _ in {1..30}; do
+    sleep 0.1
+    if ctxdctl ping >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  die "could not start context monitoring daemon"
+}
+
+start_monitoring() {
+  local slug="$1"
+  ensure_daemon
+  ctxdctl start "$slug" >/dev/null
+}
+
+checkpoint_context() {
+  local slug="$1"
+  ensure_daemon
+  ctxdctl checkpoint "$slug" >/dev/null
+}
+
+stop_monitoring() {
+  if ctxdctl ping >/dev/null 2>&1; then
+    ctxdctl stop >/dev/null || true
+  fi
+}
+
+switch_context() {
+  local slug="$1" old
+  [[ -f "$PROJECT_DIR/$slug.conf" ]] || die "unknown or archived context: $slug"
+
+  old="$(current_context || true)"
+  if [[ -n "$old" && "$old" != "$slug" ]]; then
+    checkpoint_context "$old"
+    stop_monitoring
+  elif [[ "$old" == "$slug" ]]; then
+    start_monitoring "$slug"
+    printf 'Already in %s\n' "$slug"
+    return 0
+  fi
+
+  printf '%s\n' "$slug" > "$CURRENT_FILE"
+  if ! start_monitoring "$slug"; then
+    rm -f "$CURRENT_FILE"
+    die "could not start context monitoring; context switch cancelled"
+  fi
+
+  printf 'Switched to %s\n' "$slug"
+}
+
+cmd_new() {
+  local name="${*:-}"
+  if [[ -z "$name" ]]; then
+    read -r -p "Context name: " name
+  fi
+  [[ -n "${name//[[:space:]]/}" ]] || die "context name cannot be empty"
+
+  local slug
+  slug="$(unique_slug "$(slugify "$name")")"
+  {
+    printf 'name=%s\n' "$name"
+    printf 'created_at=%s\n' "$(date --iso-8601=seconds)"
+  } > "$PROJECT_DIR/$slug.conf"
+
+  switch_context "$slug"
+}
+
+cmd_list() {
+  local mode="${1:-active}"
+  local dirs=()
+  case "$mode" in
+    active) dirs=("$PROJECT_DIR") ;;
+    --archived|archived) dirs=("$ARCHIVE_DIR") ;;
+    --all|all) dirs=("$PROJECT_DIR" "$ARCHIVE_DIR") ;;
+    *) die "usage: ctx list [--archived|--all]" ;;
+  esac
+
+  local current file slug name status found=0
+  current="$(current_context || true)"
+
+  for dir in "${dirs[@]}"; do
+    shopt -s nullglob
+    for file in "$dir"/*.conf; do
+      found=1
+      slug="$(basename "$file" .conf)"
+      name="$(sed -n 's/^name=//p' "$file" | head -n1)"
+      status=""
+      [[ "$dir" == "$ARCHIVE_DIR" ]] && status=" [archived]"
+      [[ "$slug" == "$current" ]] && status=" [current]"
+      printf '%-24s %s%s\n' "$slug" "$name" "$status"
+    done
+    shopt -u nullglob
+  done
+
+  [[ "$found" -eq 1 ]] || printf 'No contexts.\n'
+}
+
+cmd_current() {
+  local slug
+  slug="$(current_context || true)"
+  if [[ -z "$slug" ]]; then
+    printf 'No active context.\n'
+  else
+    printf '%s\n' "$slug"
+  fi
+}
+
+cmd_show() {
+  local slug="${1:-$(current_context || true)}"
+  [[ -n "$slug" ]] || die "no context specified and no context is active"
+  local file
+  file="$(conf_path "$slug")" || die "unknown context: $slug"
+  cat "$file"
+  printf 'slug=%s\n' "$slug"
+  printf 'snapshot=%s/%s/snapshot.json\n' "$STATE_DIR" "$slug"
+}
+
+cmd_edit() {
+  local slug="${1:-$(current_context || true)}"
+  [[ -n "$slug" ]] || die "no context specified and no context is active"
+  local file editor
+  file="$(conf_path "$slug")" || die "unknown context: $slug"
+  editor="${EDITOR:-vi}"
+  "$editor" "$file"
+}
+
+cmd_exit() {
+  local slug
+  slug="$(current_context || true)"
+  if [[ -z "$slug" ]]; then
+    stop_monitoring
+    printf 'No active context.\n'
+    return 0
+  fi
+
+  checkpoint_context "$slug"
+  stop_monitoring
+  rm -f "$CURRENT_FILE"
+  printf 'Exited %s\n' "$slug"
+}
+
+cmd_delete() {
+  local slug="${1:-}"
+  [[ -n "$slug" ]] || die "usage: ctx delete <context>"
+  local file current
+  file="$(conf_path "$slug")" || die "unknown context: $slug"
+  current="$(current_context || true)"
+
+  if [[ "$current" == "$slug" ]]; then
+    checkpoint_context "$slug"
+    stop_monitoring
+    rm -f "$CURRENT_FILE"
+  fi
+
+  rm -f "$file"
+  rm -rf "$STATE_DIR/$slug"
+  printf 'Deleted %s\n' "$slug"
+}
+
+cmd_archive() {
+  local slug="${1:-}"
+  [[ -n "$slug" ]] || die "usage: ctx archive <context>"
+  [[ -f "$PROJECT_DIR/$slug.conf" ]] || die "unknown active context: $slug"
+
+  local current
+  current="$(current_context || true)"
+  if [[ "$current" == "$slug" ]]; then
+    checkpoint_context "$slug"
+    stop_monitoring
+    rm -f "$CURRENT_FILE"
+  fi
+
+  mv "$PROJECT_DIR/$slug.conf" "$ARCHIVE_DIR/$slug.conf"
+  printf 'Archived %s\n' "$slug"
+}
+
+cmd_unarchive() {
+  local slug="${1:-}"
+  [[ -n "$slug" ]] || die "usage: ctx unarchive <context>"
+  [[ -f "$ARCHIVE_DIR/$slug.conf" ]] || die "unknown archived context: $slug"
+  [[ ! -e "$PROJECT_DIR/$slug.conf" ]] || die "active context already exists: $slug"
+
+  mv "$ARCHIVE_DIR/$slug.conf" "$PROJECT_DIR/$slug.conf"
+  printf 'Unarchived %s\n' "$slug"
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ctx new [name]
+  ctx list [--archived|--all]
+  ctx current
+  ctx show [context]
+  ctx edit [context]
+  ctx switch <context>
+  ctx exit
+  ctx delete <context>
+  ctx archive <context>
+  ctx unarchive <context>
+EOF
+}
+
+case "${1:-}" in
+  new)
+    shift
+    cmd_new "$@"
+    ;;
+  list)
+    shift
+    cmd_list "${1:-active}"
+    ;;
+  current)
+    cmd_current
+    ;;
+  show)
+    shift
+    cmd_show "${1:-}"
+    ;;
+  edit)
+    shift
+    cmd_edit "${1:-}"
+    ;;
+  switch|use)
+    [[ -n "${2:-}" ]] || die "usage: ctx switch <context>"
+    switch_context "$2"
+    ;;
+  exit|leave)
+    cmd_exit
+    ;;
+  delete|rm)
+    cmd_delete "${2:-}"
+    ;;
+  archive)
+    cmd_archive "${2:-}"
+    ;;
+  unarchive)
+    cmd_unarchive "${2:-}"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    die "unknown command: $1"
+    ;;
+esac
