@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/ctx-$UID}"
+SOCKET="$RUNTIME_DIR/ctxd.sock"
+
+die() {
+  printf 'ctxdctl: %s\n' "$*" >&2
+  exit 1
+}
+
+send() {
+  [[ -S "$SOCKET" ]] || die "ctxd is not running"
+  printf '%s\n' "$1" | socat - "UNIX-CONNECT:$SOCKET"
+}
+
+case "${1:-}" in
+  ping)
+    send "PING"
+    ;;
+  start)
+    [[ -n "${2:-}" ]] || die "usage: ctxdctl start <context>"
+    send $'START\t'"$2"
+    ;;
+  stop)
+    send "STOP"
+    ;;
+  checkpoint)
+    [[ -n "${2:-}" ]] || die "usage: ctxdctl checkpoint <context>"
+    send $'CHECKPOINT\t'"$2"
+    ;;
+  update)
+    [[ -n "${2:-}" && -n "${3:-}" ]] || die "usage: ctxdctl update <source> <json>"
+    send $'UPDATE\t'"$2"$'\t'"$3"
+    ;;
+  status)
+    send "STATUS"
+    ;;
+  *)
+    cat >&2 <<'EOF'
+Usage:
+  ctxdctl ping
+  ctxdctl start <context>
+  ctxdctl stop
+  ctxdctl checkpoint <context>
+  ctxdctl update <source> <json>
+  ctxdctl status
+EOF
+    exit 2
+    ;;
+esac
