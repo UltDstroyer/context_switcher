@@ -21,10 +21,16 @@
         let
           pkgs = import nixpkgs { inherit system; };
           contextSwitcher = pkgs.callPackage ./package.nix { };
+          adapters = import ./adapters { inherit pkgs; };
         in
         {
           default = contextSwitcher;
           context-switcher = contextSwitcher;
+
+          adapter-firefox = adapters.firefox;
+          adapter-obsidian = adapters.obsidian;
+          adapter-vscode = adapters.vscode;
+          adapter-kde = adapters.kde;
         }
       );
 
@@ -42,6 +48,10 @@
 
       checks = forAllSystems (system: {
         package = self.packages.${system}.default;
+        adapter-firefox = self.packages.${system}.adapter-firefox;
+        adapter-obsidian = self.packages.${system}.adapter-obsidian;
+        adapter-vscode = self.packages.${system}.adapter-vscode;
+        adapter-kde = self.packages.${system}.adapter-kde;
       });
 
       devShells = forAllSystems (
@@ -63,6 +73,7 @@
 
       overlays.default = final: _prev: {
         context-switcher = final.callPackage ./package.nix { };
+        context-switcher-adapters = import ./adapters { pkgs = final; };
       };
 
       homeManagerModules = {
