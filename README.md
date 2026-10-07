@@ -89,6 +89,13 @@ If you manage user applications through Home Manager, import:
     enable = true;
 
     daemon.enable = true;
+
+    integrations = {
+      firefox.enable = true;
+      obsidian.enable = true;
+      vscode.enable = true;
+      kde.enable = true;
+    };
   };
 }
 ```
@@ -148,15 +155,27 @@ When monitoring starts, live state is cleared. When a context is checkpointed, t
 
 The snapshot contains generic desktop/process information plus state reported by application adapters. Updates sent while monitoring is stopped are ignored.
 
-Application-specific capture is adapter-oriented. Executables named like these can contribute JSON to a snapshot:
+Application-specific capture is adapter-oriented. The Nix modules can install adapters independently:
+
+```nix
+programs.contextSwitcher.integrations = {
+  firefox.enable = true;
+  obsidian.enable = true;
+  vscode.enable = true;
+  kde.enable = true;
+};
+```
+
+Each enabled integration contributes a `ctx-capture-<name>` executable to the daemon's PATH. The current first-pass adapters capture whether the application/session component is running plus matching process and window metadata. They intentionally do not pretend to understand application-native session formats yet.
 
 ```text
 ctx-capture-firefox
 ctx-capture-obsidian
 ctx-capture-vscode
+ctx-capture-kde
 ```
 
-Missing applications or adapters are not errors. This allows different machines to participate in the same context system without having identical software installed.
+Missing or disabled adapters are not errors. This lets a laptop, desktop, or future device use the same logical contexts without requiring identical software.
 
 Applications and future integrations can also report state directly:
 
@@ -183,6 +202,7 @@ context_switcher/
 │   ├── ctxd
 │   └── ctxdctl
 ├── adapters/
+│   ├── default.nix
 │   └── README.md
 ├── nix/
 │   ├── home-manager.nix
@@ -257,7 +277,7 @@ Planned layers:
 6. Add optional synchronization between NixOS machines.
 7. Eventually allow contexts to restore work intelligently on a machine that does not have exactly the same applications as the machine that captured them.
 
-A future configuration can therefore grow naturally without changing the base import:
+The integration interface is now live:
 
 ```nix
 programs.contextSwitcher = {
@@ -267,10 +287,11 @@ programs.contextSwitcher = {
     firefox.enable = true;
     obsidian.enable = true;
     vscode.enable = true;
+    kde.enable = true;
   };
-
-  sync.enable = true;
 };
 ```
+
+Future state capture can become richer behind those same switches. Planned additions include application-native restore adapters, device-aware state, terminals, and optional synchronization.
 
 The repository is now intended to be consumed as infrastructure, not copied into each machine configuration.
