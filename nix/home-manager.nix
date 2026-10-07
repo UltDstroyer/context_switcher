@@ -2,6 +2,14 @@
 
 let
   cfg = config.programs.contextSwitcher;
+  integrations = import ./integrations.nix { inherit lib pkgs cfg; };
+
+  integrationOptions = {
+    firefox.enable = lib.mkEnableOption "Firefox context capture";
+    obsidian.enable = lib.mkEnableOption "Obsidian context capture";
+    vscode.enable = lib.mkEnableOption "VS Code/VSCodium context capture";
+    kde.enable = lib.mkEnableOption "KDE Plasma context capture";
+  };
 in
 {
   options.programs.contextSwitcher = {
@@ -19,10 +27,12 @@ in
       default = true;
       description = "Whether to run ctxd as a systemd user service.";
     };
+
+    integrations = integrationOptions;
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.package ];
+    home.packages = [ cfg.package ] ++ integrations.selected;
 
     systemd.user.services.context-switcher = lib.mkIf cfg.daemon.enable {
       Unit = {
@@ -33,6 +43,9 @@ in
         ExecStart = "${cfg.package}/bin/ctxd";
         Restart = "on-failure";
         RestartSec = 2;
+        Environment = [
+          "PATH=${integrations.path}:${cfg.package}/bin:/run/current-system/sw/bin"
+        ];
       };
 
       Install = {
