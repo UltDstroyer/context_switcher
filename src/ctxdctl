@@ -11,7 +11,11 @@ die() {
 
 send() {
   [[ -S "$SOCKET" ]] || die "ctxd is not running"
-  printf '%s\n' "$1" | socat - "UNIX-CONNECT:$SOCKET"
+  local response
+  response="$(printf '%s\n' "$1" | socat - "UNIX-CONNECT:$SOCKET")" || return 1
+  [[ -n "$response" ]] || die "daemon returned an empty response"
+  [[ "$response" != ERR* ]] || die "$response"
+  printf '%s\n' "$response"
 }
 
 case "${1:-}" in

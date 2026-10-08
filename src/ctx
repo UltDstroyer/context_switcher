@@ -6,8 +6,13 @@ PROJECT_DIR="$CONFIG_ROOT/projects"
 ARCHIVE_DIR="$CONFIG_ROOT/archived"
 STATE_DIR="$CONFIG_ROOT/state"
 CURRENT_FILE="$STATE_DIR/current"
+HOOK_DIR="$CONFIG_ROOT/hooks"
 
 mkdir -p "$PROJECT_DIR" "$ARCHIVE_DIR" "$STATE_DIR"
+
+# Serialize lifecycle changes, including potentially slow service shutdowns.
+exec 9>"$STATE_DIR/lifecycle.lock"
+flock -x 9
 
 die() {
   printf 'ctx: %s\n' "$*" >&2
@@ -61,7 +66,7 @@ ensure_daemon() {
     die "ctxd is not installed or not in PATH"
   fi
 
-  nohup ctxd >/dev/null 2>&1 &
+  nohup ctxd 9>&- >/dev/null 2>&1 &
   for _ in {1..30}; do
     sleep 0.1
     if ctxdctl ping >/dev/null 2>&1; then
@@ -73,43 +78,103 @@ ensure_daemon() {
 
 start_monitoring() {
   local slug="$1"
-  ensure_daemon
+  ensure_daemon || return 1
   ctxdctl start "$slug" >/dev/null
 }
 
 checkpoint_context() {
   local slug="$1"
-  ensure_daemon
+  ensure_daemon || return 1
   ctxdctl checkpoint "$slug" >/dev/null
 }
 
 stop_monitoring() {
   if ctxdctl ping >/dev/null 2>&1; then
-    ctxdctl stop >/dev/null || true
+    ctxdctl stop >/dev/null || return 1
   fi
+}
+
+validate_slug() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "invalid context slug: $1"
+}
+
+run_hook() {
+  local slug="$1" event="$2" hook="$HOOK_DIR/$1/$2"
+  [[ -e "$hook" ]] || return 0
+  [[ -f "$hook" && -x "$hook" ]] || {
+    printf 'ctx: hook must be an executable file: %s\n' "$hook" >&2
+    return 1
+  }
+  CTX_CONTEXT="$slug" CTX_EVENT="$event" CTX_CONFIG_ROOT="$CONFIG_ROOT" \
+    "$hook" 9>&- || {
+      printf 'ctx: %s hook failed for %s\n' "$event" "$slug" >&2
+      return 1
+    }
+}
+
+leave_context() {
+  local slug="$1"
+  checkpoint_context "$slug" || return 1
+  # Keep the old context active if its shutdown fails, so leaving can be retried.
+  run_hook "$slug" leave || return 1
+  stop_monitoring || return 1
+  rm -f "$CURRENT_FILE"
 }
 
 switch_context() {
   local slug="$1" old
+  validate_slug "$slug"
   [[ -f "$PROJECT_DIR/$slug.conf" ]] || die "unknown or archived context: $slug"
 
   old="$(current_context || true)"
-  if [[ -n "$old" && "$old" != "$slug" ]]; then
-    checkpoint_context "$old"
-    stop_monitoring
-  elif [[ "$old" == "$slug" ]]; then
-    start_monitoring "$slug"
+  if [[ "$old" == "$slug" ]]; then
     printf 'Already in %s\n' "$slug"
     return 0
   fi
 
-  printf '%s\n' "$slug" > "$CURRENT_FILE"
-  if ! start_monitoring "$slug"; then
-    rm -f "$CURRENT_FILE"
-    die "could not start context monitoring; context switch cancelled"
+  # Check the daemon before shutting down the previous context.
+  ensure_daemon
+  if [[ -n "$old" ]]; then
+    leave_context "$old" || die "could not leave $old; context switch cancelled"
   fi
 
+  if ! start_monitoring "$slug"; then
+    stop_monitoring
+    die "could not start context monitoring; no context is active"
+  fi
+  if ! run_hook "$slug" enter; then
+    # A hook may have partially started a service before reporting failure.
+    if ! run_hook "$slug" leave; then
+      printf '%s\n' "$slug" > "$CURRENT_FILE"
+      die "enter and cleanup failed for $slug; context retained so ctx exit can retry"
+    fi
+    stop_monitoring
+    die "enter hook failed for $slug; no context is active"
+  fi
+  printf '%s\n' "$slug" > "$CURRENT_FILE"
   printf 'Switched to %s\n' "$slug"
+}
+
+cmd_service() {
+  local slug="${1:-}" unit="${2:-}" dir event action
+  [[ -n "$slug" && -n "$unit" && "$#" -eq 2 ]] || die "usage: ctx service <context> <user-service>"
+  validate_slug "$slug"
+  [[ -f "$PROJECT_DIR/$slug.conf" ]] || die "unknown or archived context: $slug"
+  [[ "$unit" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*\.service$ ]] || die "expected a systemd .service unit name"
+  [[ "$(current_context || true)" != "$slug" ]] || die "exit $slug before configuring its service"
+  dir="$HOOK_DIR/$slug"
+  [[ ! -e "$dir/enter" && ! -e "$dir/leave" ]] || die "hooks already exist for $slug; edit them instead"
+  mkdir -p "$dir"
+  for event in enter leave; do
+    action=start
+    [[ "$event" == leave ]] && action=stop
+    {
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+      printf 'exec systemctl --user %s -- %q\n' "$action" "$unit"
+    } > "$dir/$event"
+    chmod 700 "$dir/$event"
+  done
+  printf 'Attached %s to %s. It will start on entry and stop on leave.\n' "$unit" "$slug"
 }
 
 cmd_new() {
@@ -172,6 +237,7 @@ cmd_current() {
 cmd_show() {
   local slug="${1:-$(current_context || true)}"
   [[ -n "$slug" ]] || die "no context specified and no context is active"
+  validate_slug "$slug"
   local file
   file="$(conf_path "$slug")" || die "unknown context: $slug"
   cat "$file"
@@ -182,6 +248,7 @@ cmd_show() {
 cmd_edit() {
   local slug="${1:-$(current_context || true)}"
   [[ -n "$slug" ]] || die "no context specified and no context is active"
+  validate_slug "$slug"
   local file editor
   file="$(conf_path "$slug")" || die "unknown context: $slug"
   editor="${EDITOR:-vi}"
@@ -197,41 +264,37 @@ cmd_exit() {
     return 0
   fi
 
-  checkpoint_context "$slug"
-  stop_monitoring
-  rm -f "$CURRENT_FILE"
+  leave_context "$slug" || die "could not leave $slug; context remains active"
   printf 'Exited %s\n' "$slug"
 }
 
 cmd_delete() {
   local slug="${1:-}"
   [[ -n "$slug" ]] || die "usage: ctx delete <context>"
+  validate_slug "$slug"
   local file current
   file="$(conf_path "$slug")" || die "unknown context: $slug"
   current="$(current_context || true)"
 
   if [[ "$current" == "$slug" ]]; then
-    checkpoint_context "$slug"
-    stop_monitoring
-    rm -f "$CURRENT_FILE"
+    leave_context "$slug" || die "could not leave $slug; context remains active"
   fi
 
   rm -f "$file"
-  rm -rf "$STATE_DIR/$slug"
+  rm -rf "$STATE_DIR/$slug" "$HOOK_DIR/$slug"
   printf 'Deleted %s\n' "$slug"
 }
 
 cmd_archive() {
   local slug="${1:-}"
   [[ -n "$slug" ]] || die "usage: ctx archive <context>"
+  validate_slug "$slug"
   [[ -f "$PROJECT_DIR/$slug.conf" ]] || die "unknown active context: $slug"
 
   local current
   current="$(current_context || true)"
   if [[ "$current" == "$slug" ]]; then
-    checkpoint_context "$slug"
-    stop_monitoring
-    rm -f "$CURRENT_FILE"
+    leave_context "$slug" || die "could not leave $slug; context remains active"
   fi
 
   mv "$PROJECT_DIR/$slug.conf" "$ARCHIVE_DIR/$slug.conf"
@@ -241,6 +304,7 @@ cmd_archive() {
 cmd_unarchive() {
   local slug="${1:-}"
   [[ -n "$slug" ]] || die "usage: ctx unarchive <context>"
+  validate_slug "$slug"
   [[ -f "$ARCHIVE_DIR/$slug.conf" ]] || die "unknown archived context: $slug"
   [[ ! -e "$PROJECT_DIR/$slug.conf" ]] || die "active context already exists: $slug"
 
@@ -258,6 +322,7 @@ Usage:
   ctx edit [context]
   ctx switch <context>
   ctx exit
+  ctx service <context> <user-service>
   ctx delete <context>
   ctx archive <context>
   ctx unarchive <context>
@@ -287,6 +352,10 @@ case "${1:-}" in
   switch|use)
     [[ -n "${2:-}" ]] || die "usage: ctx switch <context>"
     switch_context "$2"
+    ;;
+  service)
+    shift
+    cmd_service "$@"
     ;;
   exit|leave)
     cmd_exit

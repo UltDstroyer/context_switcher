@@ -136,12 +136,90 @@ ctx show [context]         Show context metadata and snapshot location
 ctx edit [context]         Edit context metadata
 ctx switch <context>       Enter a context and start monitoring
 ctx exit                   Checkpoint the active context and stop monitoring
+ctx service <context> <unit> Attach a systemd user service to a context
 ctx archive <context>      Checkpoint if active, then archive it
 ctx unarchive <context>    Restore an archived context to the active list
 ctx delete <context>       Delete a context and its saved state
 ```
 
 `ctx new` asks only for a name when one is not provided. It does not ask which apps or folders belong to the context. The context learns its contents from the session itself.
+
+## Context lifecycle hooks and Minecraft
+
+Executable hooks live in `$XDG_CONFIG_HOME/ctx/hooks/<context>/enter` and
+`leave` (default: `~/.config/ctx/hooks/<context>/`). Context metadata is still
+plain data; it is never sourced as shell code. Hooks are optional and run as
+scripts with `CTX_CONTEXT`, `CTX_EVENT`, and `CTX_CONFIG_ROOT` in their environment.
+Use hooks only for programs you trust. Do not call lifecycle-changing `ctx`
+commands inside hooks: those commands wait for the lifecycle lock held by the caller.
+
+Entry starts monitoring, runs `enter`, then records the active context. Leaving
+checkpoints the context, runs `leave`, stops monitoring, then clears the active
+context. This applies to switching away, `exit`, and archiving or deleting the
+active context. Archiving preserves hooks; deletion removes them. Concurrent CLI
+operations are serialized so a new context cannot start while the previous
+service is still stopping. Selecting an already active context is a no-op.
+
+A failed leave hook cancels the transition and retains the old context for retry.
+A failed enter hook invokes the destination's leave hook to clean up partial
+startup, and leaves no active context if cleanup succeeds. If cleanup also fails,
+the destination stays active so `ctx exit` can retry. Hooks should be idempotent.
+
+### Attach the existing Minecraft user service
+
+After updating your Nix flake input and rebuilding, first leave any active
+context. Use `ctx list` to find the existing Minecraft context's slug. If you do
+not have one yet, create it with `ctx new Minecraft`, then run `ctx exit`.
+Assuming its slug is `minecraft`:
+
+```bash
+ctx service minecraft minecraft-mm.service
+ctx switch minecraft
+```
+
+`ctx service` writes two machine-local hooks that run:
+
+```bash
+systemctl --user start -- minecraft-mm.service
+systemctl --user stop -- minecraft-mm.service
+```
+
+It refuses to overwrite existing hooks or configure the currently active context.
+The service's existing systemd/RCON shutdown owns saving and stopping Minecraft;
+ctx does not send RCON commands or kill Java itself. Systemctl waits for the stop
+job to complete before ctx finishes leaving. Startup completion follows the
+service's configured systemd Type; it is not necessarily Minecraft readiness.
+
+Test on your machine:
+
+```bash
+systemctl --user status minecraft-mm.service
+ctx exit
+systemctl --user status minecraft-mm.service
+journalctl --user -u minecraft-mm.service -n 40 --no-pager
+```
+
+For a configuration flake in `/etc/nixos` with an input named `context-switcher`:
+
+```bash
+cd /etc/nixos
+sudo nix flake update context-switcher
+sudo nixos-rebuild switch --flake .
+```
+
+Use your usual rebuild target if your configuration requires `.#<hostname>`.
+Updating the repo does not automatically update an existing `flake.lock` or the
+installed Nix-managed ctx. Keep using the packaged executable; do not copy it
+into `~/.local/bin` or edit `/nix/store`.
+
+### Validation
+
+Run the lifecycle tests without real services:
+
+```bash
+python3 -m unittest discover -s tests -v
+bash -n src/ctx src/ctxd src/ctxdctl
+```
 
 ## Monitoring model
 

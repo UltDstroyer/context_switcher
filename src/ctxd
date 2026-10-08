@@ -83,7 +83,7 @@ checkpoint() {
   [[ -n "$slug" ]] || return 1
 
   local dest="$STATE_DIR/$slug"
-  mkdir -p "$dest"
+  mkdir -p "$dest" || return 1
 
   local windows processes adapters updates
   windows="$(capture_windows)"
@@ -135,8 +135,11 @@ handle_command() {
       ;;
     CHECKPOINT)
       [[ -n "${arg1:-}" ]] || { printf 'ERR missing context\n'; return; }
-      checkpoint "$arg1"
-      printf 'OK\n'
+      if checkpoint "$arg1"; then
+        printf 'OK\n'
+      else
+        printf 'ERR checkpoint failed\n'
+      fi
       ;;
     STATUS)
       if [[ -f "$MONITORING_FILE" ]]; then

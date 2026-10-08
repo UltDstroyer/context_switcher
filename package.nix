@@ -10,6 +10,8 @@
   procps,
   socat,
   wmctrl,
+  util-linux,
+  systemd,
 }:
 
 stdenvNoCC.mkDerivation {
@@ -40,6 +42,8 @@ stdenvNoCC.mkDerivation {
       procps
       socat
       wmctrl
+      util-linux
+      systemd
     ]}"
 
     wrapProgram "$out/bin/ctx" --prefix PATH : "$runtimePath"
