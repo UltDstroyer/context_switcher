@@ -108,7 +108,9 @@ handle_command() {
   flock -x 8
   local line cmd arg1 arg2 arg3
   IFS= read -r line || true
-  IFS= "$cmd" in
+  IFS=$'\t' read -r cmd arg1 arg2 arg3 <<<"$line"
+
+  case "$cmd" in
     PING)
       printf 'PONG\n'
       ;;
