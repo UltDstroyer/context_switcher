@@ -233,6 +233,26 @@ When monitoring starts, live state is cleared. When a context is checkpointed, t
 
 The snapshot contains generic desktop/process information plus state reported by application adapters. Updates sent while monitoring is stopped are ignored.
 
+### Firefox native tab capture (development MVP)
+
+The Firefox integration now includes an extension under `firefox-extension/`
+and a Python native-messaging bridge under `native-host/`. The existing
+`ctx-capture-firefox` adapter still captures generic process/window state,
+while the extension contributes tab/window data to
+`snapshot.json` under `.live_updates.firefox`.
+
+On NixOS, enable `programs.contextSwitcher.integrations.firefox.enable = true;`
+and rebuild, then run `ctx-firefox-register` as your normal user.
+Home Manager registers the host automatically when Firefox capture is enabled.
+Load `firefox-extension/manifest.json` from `about:debugging` for development.
+This temporary extension is removed on Firefox restart.
+
+See [Firefox integration setup and limitations](firefox-extension/README.md).
+Native messaging only operates locally, and `ctxd` checks the context on
+every Firefox update. It does not capture private windows or page contents.
+A persistent Firefox extension still requires Mozilla signing, and reliable
+leave-time flush/restore remains follow-up work.
+
 Application-specific capture is adapter-oriented. The Nix modules can install adapters independently:
 
 ```nix

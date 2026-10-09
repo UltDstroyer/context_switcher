@@ -1,0 +1,29 @@
+name: Firefox bridge checks
+on:
+  push:
+    branches: [feat/firefox-context-capture]
+  pull_request:
+    paths:
+      - "firefox-extension/**"
+      - "native-host/**"
+      - "src/ctxd"
+      - "tests/test_firefox_*.py"
+      - "package.nix"
+      - "nix/home-manager.nix"
+      - ".github/workflows/firefox-checks.yml"
+jobs:
+  firefox-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python and shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq util-linux
+          python3 -m unittest discover -s tests -p 'test_firefox_*.py' -v
+          bash -n src/ctx src/ctxd src/ctxdctl native-host/register.sh
+      - name: Check extension syntax and manifest
+        run: |
+          node --check firefox-extension/background.js
+          node --check firefox-extension/popup/popup.js
+          python3 -m json.tool firefox-extension/manifest.json > /dev/null

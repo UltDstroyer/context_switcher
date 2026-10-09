@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Context Switcher",
+  "version": "0.1.0",
+  "description": "Save Firefox workspaces to your local ctx context.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "context-switcher@local",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": ["tabs", "nativeMessaging"],
+  "incognito": "not_allowed",
+  "background": {"scripts": ["background.js"]},
+  "action": {
+    "default_title": "Context Switcher",
+    "default_popup": "popup/popup.html"
+  }
+}
