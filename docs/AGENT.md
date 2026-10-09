@@ -26,7 +26,7 @@ Nix to authenticate to GitHub separately.
    under /home/lena/src/local-ai-agent (adjust for your NixOS username).
 2. Add to your existing NixOS flake inputs:
 
-       context-switcher.url = "github:UltDstroyer/context_switcher?ref=feat/ctx-agent-integration";
+       context-switcher.url = "github:UltDstroyer/context_switcher";
        ctx-agent.url = "path:/home/lena/src/local-ai-agent";
 
 3. Import BOTH NixOS modules into your host's modules list:
