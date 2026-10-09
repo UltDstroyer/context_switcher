@@ -33,6 +33,19 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ] ++ integrations.selected;
+    
+    # Automatically register the local native-messaging bridge for Firefox.
+    home.file.".mozilla/native-messaging-hosts/org.ctx_switcher.firefox.json" =
+      lib.mkIf cfg.integrations.firefox.enable {
+        text = builtins.toJSON {
+          name = "org.ctx_switcher.firefox";
+          description = "Local Firefox bridge for Context Switcher";
+          path = "${cfg.package}/bin/ctx-firefox-host";
+          type = "stdio";
+          allowed_extensions = [ "context-switcher@local" ];
+        };
+      };
+
 
     systemd.user.services.context-switcher = lib.mkIf cfg.daemon.enable {
       Unit = {
