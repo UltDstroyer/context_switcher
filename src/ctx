@@ -178,117 +178,51 @@ cmd_service() {
 }
 
 
-# Local AI companion. Context lifecycle remains separate from background jobs:
-# switching/exiting contexts never stops or starts existing AI tasks.
-agent_project() {
-  local specified="${1:-}" slug
-  if [[ -n "$specified" ]]; then
-    [[ "$specified" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$ ]] ||
-      die "invalid AI project name: $specified"
-    printf '%s\n' "$specified"
-    return
+# Extension API v1: the core never knows a plugin's internal commands.
+extension_dispatch() {
+  local extension="$1" executable active
+  shift
+  [[ "$extension" =~ ^[a-z][a-z0-9-]{0,47}$ ]] ||
+    die "invalid extension name: $extension"
+
+  executable="ctx-ext-$extension"
+  command -v "$executable" >/dev/null 2>&1 ||
+    die "extension '$extension' is not installed (expected $executable in PATH)"
+
+  active="$(current_context || true)"
+  if [[ -n "$active" ]]; then
+    validate_slug "$active"
+    [[ -f "$PROJECT_DIR/$active.conf" ]] ||
+      die "active context has no configuration: $active"
   fi
 
-  slug="$(current_context || true)"
-  [[ -n "$slug" ]] ||
-    die "no active context; switch to one or supply --project <name>"
-  validate_slug "$slug"
-  [[ -f "$PROJECT_DIR/$slug.conf" ]] ||
-    die "active context is missing its configuration: $slug"
-  printf '%s\n' "$slug"
-}
-
-agent_usage() {
-  cat <<'EOF'
-Usage:
-  ctx agent health | status [job-id]
-  ctx agent projects | list
-  ctx agent init [--project name]
-  ctx agent import [--project name] <source-directory>
-  ctx agent submit [--project name] "<task>"
-  ctx agent note [--project name] <key> "<text>"
-  ctx agent notes [--project name]
-  ctx agent mode quiet|balanced|maximum
-  ctx agent events|logs|show|diff|apply|cancel <job-id>
-  ctx agent pause | resume
-  ctx agent media <record|enroll|narrate|mux> ...
-
-Context-scoped commands default to the currently active ctx context.
-They do not start/stop the AI service or change running background tasks.
-Only the explicit apply command sends a request to write reviewed changes.
-EOF
-}
-
-cmd_agent() {
-  local action="${1:-help}" package="ctx-agent" project="" explicit=""
-  [[ "$#" -gt 0 ]] && shift || true
-  local -a forwarded=()
-  case "$action" in
-    -h|--help|help)
-      agent_usage
-      return
-      ;;
-    init|import|submit|note|notes)
-      if [[ "${1:-}" == "--project" ]]; then
-        shift
-        [[ "$#" -gt 0 && -n "$1" ]] ||
-          die "usage: ctx agent $action --project <name> ..."
-        explicit="$1"
-        shift
-      fi
-      project="$(agent_project "$explicit")"
-      case "$action" in
-        init|notes)
-          [[ "$#" -eq 0 ]] ||
-            die "usage: ctx agent $action [--project name]"
-          ;;
-        import)
-          [[ "$#" -eq 1 ]] ||
-            die "usage: ctx agent import [--project name] <source-directory>"
-          ;;
-        submit)
-          [[ "$#" -eq 1 && -n "$1" ]] ||
-            die 'usage: ctx agent submit [--project name] "<task>"'
-          ;;
-        note)
-          [[ "$#" -eq 2 && -n "$1" ]] ||
-            die 'usage: ctx agent note [--project name] <key> "<text>"'
-          ;;
-      esac
-      forwarded=( "$action" "$project" "$@" )
-      ;;
-    status)
-      if [[ "$#" -eq 0 ]]; then
-        forwarded=( health )
-      elif [[ "$#" -eq 1 ]]; then
-        forwarded=( show "$1" )
-      else
-        die "usage: ctx agent status [job-id]"
-      fi
-      ;;
-    logs)
-      [[ "$#" -eq 1 ]] || die "usage: ctx agent logs <job-id>"
-      forwarded=( events "$1" )
-      ;;
-    health|projects|list|pause|resume|mode|events|show|diff|apply|cancel)
-      forwarded=( "$action" "$@" )
-      ;;
-    media)
-      package="ctx-agent-media"
-      [[ "$#" -gt 0 ]] || die "usage: ctx agent media <record|enroll|narrate|mux> ..."
-      forwarded=( "$@" )
-      ;;
-    *)
-      die "unknown agent command: $action; try ctx agent help"
-      ;;
-  esac
-
-  command -v "$package" >/dev/null 2>&1 ||
-    die "$package is not installed; enable services.ctxAgent or install the local-ai-agent package"
-  # Release the context lifecycle lock before potentially long operations.
-  # The active context is resolved above under lock, then becomes a snapshot.
+  # No extra privilege or automatic lifecycle operation is granted.
+  # Release lock before potentially lengthy extension execution.
   flock -u 9
-  exec "$package" "${forwarded[@]}"
+  CTX_EXTENSION_API_VERSION=1 CTX_CONTEXT="$active" \
+    CTX_CONFIG_ROOT="$CONFIG_ROOT" exec "$executable" "$@"
+}
+
+cmd_extensions() {
+  local dir path name
+  local -a dirs=()
+  local -A discovered=()
+  IFS=: read -r -a dirs <<< "$PATH"
+  for dir in "${dirs[@]}"; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    for path in "$dir"/ctx-ext-*; do
+      [[ -f "$path" && -x "$path" ]] || continue
+      name="${path##*/}"
+      name="${name#ctx-ext-}"
+      [[ "$name" =~ ^[a-z][a-z0-9-]{0,47}$ ]] || continue
+      discovered["$name"]=1
+    done
+  done
+  if [[ "${#discovered[@]}" -eq 0 ]]; then
+    printf 'No ctx extensions installed.\n'
+    return
+  fi
+  printf '%s\n' "${!discovered[@]}" | sort
 }
 
 cmd_new() {
@@ -437,7 +371,8 @@ Usage:
   ctx switch <context>
   ctx exit
   ctx service <context> <user-service>
-  ctx agent <command> [arguments]       Local AI task and media companion
+  ctx extensions                        List installed extensions
+  ctx <extension> [args...]             Run an installed ctx-ext-<extension>
   ctx delete <context>
   ctx archive <context>
   ctx unarchive <context>
@@ -472,9 +407,8 @@ case "${1:-}" in
     shift
     cmd_service "$@"
     ;;
-  agent)
-    shift
-    cmd_agent "$@"
+  extensions)
+    cmd_extensions
     ;;
   exit|leave)
     cmd_exit
@@ -492,6 +426,8 @@ case "${1:-}" in
     usage
     ;;
   *)
-    die "unknown command: $1"
+    extension="$1"
+    shift
+    extension_dispatch "$extension" "$@"
     ;;
 esac
