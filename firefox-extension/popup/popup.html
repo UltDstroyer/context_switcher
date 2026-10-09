@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Context Switcher</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; padding: 14px; min-width: 235px; margin: 0; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    #state { font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+    #details { color: #555; margin-bottom: 12px; overflow-wrap: anywhere; }
+    button { padding: 7px 10px; cursor: pointer; }
+    @media (prefers-color-scheme: dark) { body { background: #202124; color: white; } #details { color: #bcbcbc; } }
+  </style>
+</head>
+<body>
+  <h1>Context Switcher</h1>
+  <div id="state">Checking local bridge…</div>
+  <div id="details"></div>
+  <button id="refresh" type="button">Sync now</button>
+  <script src="popup.js"></script>
+</body>
+</html>
