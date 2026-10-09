@@ -12,6 +12,7 @@
   wmctrl,
   util-linux,
   systemd,
+  python3,
 }:
 
 stdenvNoCC.mkDerivation {
@@ -32,6 +33,8 @@ stdenvNoCC.mkDerivation {
     install -m 0755 src/ctx "$out/bin/ctx"
     install -m 0755 src/ctxd "$out/bin/ctxd"
     install -m 0755 src/ctxdctl "$out/bin/ctxdctl"
+    install -m 0755 native-host/firefox_host.py "$out/bin/ctx-firefox-host"
+    install -m 0755 native-host/register.sh "$out/bin/ctx-firefox-register"
 
     runtimePath="$out/bin:${lib.makeBinPath [
       bash
@@ -44,11 +47,14 @@ stdenvNoCC.mkDerivation {
       wmctrl
       util-linux
       systemd
+      python3
     ]}"
 
     wrapProgram "$out/bin/ctx" --prefix PATH : "$runtimePath"
     wrapProgram "$out/bin/ctxd" --prefix PATH : "$runtimePath"
     wrapProgram "$out/bin/ctxdctl" --prefix PATH : "$runtimePath"
+    wrapProgram "$out/bin/ctx-firefox-host" --prefix PATH : "$runtimePath"
+    wrapProgram "$out/bin/ctx-firefox-register" --prefix PATH : "$runtimePath"
 
     runHook postInstall
   '';
