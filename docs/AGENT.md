@@ -13,8 +13,9 @@ in a second copy of ctx inside the agent repository.
   the newly selected project.
 - Project names default to the currently active ctx slug, or explicitly
   supplied --project name. This does not auto-import or auto-create projects.
-- AI code edits remain inside disposable agent workspaces until a separate
-  ctx agent apply JOB_ID is requested by a human operator.
+- AI code edits remain inside disposable agent workspaces until an operator
+  invokes ctx agent apply JOB_ID. This updates the **agent-managed imported
+  copy** under /var/lib/ctx-agent/projects, NOT the original source tree.
 - OBS recording is owner-initiated, not passive background context capture.
 
 ## Install both NixOS components
@@ -72,7 +73,7 @@ existing flake.lock or installed NixOS package automatically.
     ctx agent status JOB_ID
     ctx agent logs JOB_ID
     ctx agent diff JOB_ID
-    ctx agent apply JOB_ID
+    ctx agent apply JOB_ID   # updates the agent-managed copy, not your live repo
 
     ctx agent mode quiet
     ctx agent mode balanced
@@ -105,6 +106,8 @@ configuring OBS and an optional voice synthesis environment in the agent repo.
   not hard percentages. Real-home access, autonomous GUI control and ChatGPT
   remote access are not implemented.
 - A source-code copy, not your live project, is exposed to AI tool calls.
+- There is not yet a conflict-safe export/sync command to copy changes back
+  to the original Git checkout. Apply is limited to the agent-managed copy.
 - Updating context-switcher without the agent package installed gives
   a clear error instead of falling back to a different execution mechanism.
 

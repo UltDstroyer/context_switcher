@@ -159,8 +159,10 @@ When a context is active, it becomes the default AI project:
     ctx agent mode quiet
     ctx agent media record start
 
-Only the explicit apply command can request the agent to copy its changed
-files to the project. Desktop recordings are explicitly initiated by the user,
+Only the explicit apply command can copy AI changes into the agent's
+**managed project copy**. It does not update the original source checkout.
+To update the original checkout, review the diff and transfer changes manually
+until a separately approved export mechanism is implemented. Desktop recordings are explicitly initiated by the user,
 not by context monitoring. Context changes do not stop running AI tasks.
 
 See [the ctx-agent integration guide](docs/AGENT.md) for setup of both
