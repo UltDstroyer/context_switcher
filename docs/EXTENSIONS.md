@@ -51,6 +51,28 @@ The listing examines executable ctx-ext-* names in PATH, without running
 their code. Plugins lacking a matching executable are not discovered.
 A plugin can also run standalone without Context Switcher.
 
+## Other extension points already provided by Context Switcher
+
+The CLI entrypoint above is the general user-facing integration, but
+context capture has a separate, existing adapter convention:
+
+- ctx-capture-ID: executable that prints a single JSON value on stdout.
+  ctxd discovers these while checkpointing and groups results by ID under
+  the snapshot adapters field. Install only trusted capture adapters, since
+  they can observe desktop/process state and may be invoked automatically.
+- ctxdctl update ID JSON: a connected app can send live state to the active
+  context monitor. Updates are ignored when monitoring is stopped.
+- Per-context enter/leave hooks: existing explicit user-created hooks can
+  start/stop context-scoped services. Extensions must NOT install these
+  silently; the owner must choose the context and enable the hook.
+- ctx-restore-ID: reserved naming convention for future opt-in restoration.
+  The current core does not execute restore adapters automatically.
+
+The roadmap is to keep these interfaces versioned, with feature-specific
+capture/restore logic living in separate repositories. Having an installed
+command extension does NOT enroll it into live monitoring or authorize it
+to capture browser tabs, microphone data or screen recordings.
+
 ## Trust model
 
 Add-ons are executable programs running with the invoker's privileges,
