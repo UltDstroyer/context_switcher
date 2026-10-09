@@ -144,29 +144,22 @@ ctx delete <context>       Delete a context and its saved state
 
 `ctx new` asks only for a name when one is not provided. It does not ask which apps or folders belong to the context. The context learns its contents from the session itself.
 
-## Local AI agent integration
+## Extension architecture
 
-Context Switcher optionally integrates with the separate local-ai-agent
-background service through the built-in ctx agent subcommand.
-When a context is active, it becomes the default AI project:
+Context Switcher is the **main platform**. Optional capabilities live in
+independent feature repositories and install a ctx-ext-NAME executable.
+The core automatically discovers the executable on PATH:
 
-    ctx switch research
-    ctx agent import ~/src/research-project
-    ctx agent submit "Improve the tests and explain the changes"
-    ctx agent list
-    ctx agent diff JOB_ID
-    ctx agent apply JOB_ID
-    ctx agent mode quiet
-    ctx agent media record start
+    ctx extensions
+    ctx agent status        # provided by local-ai-agent, if installed
+    ctx agent mode quiet    # resource settings belong to the agent add-on
 
-Only the explicit apply command can copy AI changes into the agent's
-**managed project copy**. It does not update the original source checkout.
-To update the original checkout, review the diff and transfer changes manually
-until a separately approved export mechanism is implemented. Desktop recordings are explicitly initiated by the user,
-not by context monitoring. Context changes do not stop running AI tasks.
+There is **no AI-specific code in the ctx core**. Future additions can
+ship ctx-ext-video, ctx-ext-notes, etc. without editing this repository.
 
-See [the ctx-agent integration guide](docs/AGENT.md) for setup of both
-Nix flakes, commands, safety boundaries and validation.
+See the [Extension API v1 specification](docs/EXTENSIONS.md) and the
+[agent extension installation guide](docs/AGENT.md).
+Using ctx without any extensions remains fully supported.
 
 ## Context lifecycle hooks and Minecraft
 

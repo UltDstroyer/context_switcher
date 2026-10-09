@@ -1,14 +1,15 @@
 # Context Switcher + local AI agent
 
-The CLI bridge lives in this repository in the src/ctx script, not
-in a second copy of ctx inside the agent repository.
+The main repository owns the generic Extension API v1 router. The AI-specific
+command adapter, named ctx-ext-agent, lives entirely in local-ai-agent.
+See docs/EXTENSIONS.md for the reusable interface.
 
 ## Responsibilities
 
 - Context Switcher manages context selection, lifecycle hooks, and snapshots.
 - ctx-agent owns queued tasks, Ollama, memory, execution and approvals.
-- ctx agent forwards to ctx-agent and ctx-agent-media. It does not execute
-  model-generated shell commands or speak to an unauthenticated network port.
+- ctx runs ctx-ext-agent from PATH. The extension then dispatches to its own
+  ctx-agent and ctx-agent-media commands. Core ctx does not know AI subcommands.
 - Jobs CONTINUE when you switch or exit contexts. Only future commands target
   the newly selected project.
 - Project names default to the currently active ctx slug, or explicitly
@@ -108,13 +109,14 @@ configuring OBS and an optional voice synthesis environment in the agent repo.
 - A source-code copy, not your live project, is exposed to AI tool calls.
 - There is not yet a conflict-safe export/sync command to copy changes back
   to the original Git checkout. Apply is limited to the agent-managed copy.
-- Updating context-switcher without the agent package installed gives
-  a clear error instead of falling back to a different execution mechanism.
+- Without the agent extension installed, ctx agent gives a missing-extension
+  error, while the rest of ctx still works. All add-ons are opt-in.
 
 ## Test
 
     python3 -m unittest discover -s tests -v
     bash -n src/ctx src/ctxd src/ctxdctl
 
-The tests use fake ctx-agent commands to confirm exact argument forwarding.
-A live NixOS check is still needed to verify the real Unix socket and Ollama.
+The core tests use fake ctx-ext-* executables to verify generic dispatch.
+Agent-specific argument parsing is tested in local-ai-agent. A live NixOS
+check is still needed to verify the real Unix socket and Ollama.
