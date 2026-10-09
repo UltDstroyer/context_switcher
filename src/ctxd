@@ -102,6 +102,10 @@ checkpoint() {
 }
 
 handle_command() {
+  # socat forks a process per request: serialize context transitions and updates.
+  # This makes the UPDATE_CTX context check and write one critical section.
+  exec 8>"$STATE_DIR/daemon.lock"
+  flock -x 8
   local line cmd arg1 arg2 arg3
   IFS= read -r line || true
   IFS=
