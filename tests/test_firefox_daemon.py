@@ -24,8 +24,12 @@ class GuardedUpdateTests(unittest.TestCase):
         process = subprocess.run(
             ["bash", str(DAEMON), "--handle-client"],
             input=value + "\n", text=True, capture_output=True,
-            env=self.env, timeout=5, check=True
+            env=self.env, timeout=5, check=False
         )
+        if process.returncode:
+            self.fail("daemon command failed: " + repr(value) +
+                      " stdout=" + repr(process.stdout) +
+                      " stderr=" + repr(process.stderr))
         return process.stdout.strip()
 
     def test_rejects_old_context_after_switch(self):
