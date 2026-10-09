@@ -134,7 +134,8 @@ browser.tabs.onMoved.addListener(markChanged);
 browser.tabs.onActivated.addListener(markChanged);
 browser.tabs.onAttached.addListener(markChanged);
 browser.tabs.onDetached.addListener(markChanged);
-browser.tabs.onReplaced.addListener(markChanged);
+// Firefox does not support this Chromium-only event on all versions.
+if (browser.tabs.onReplaced) browser.tabs.onReplaced.addListener(markChanged);
 browser.windows.onCreated.addListener(markChanged);
 browser.windows.onRemoved.addListener(markChanged);
 browser.windows.onFocusChanged.addListener(markChanged);
