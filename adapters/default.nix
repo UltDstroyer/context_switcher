@@ -22,9 +22,7 @@ let
 
       text = ''
         processes="$(
-          ps -u "$USER" -o pid=,comm=,args= 2>/dev/null \
-            | grep -Ei -- ${pkgs.lib.escapeShellArg processPattern} \
-            | grep -v -E 'ctx-capture-|grep -E' \
+          pgrep -a -u "$USER" -f -- ${pkgs.lib.escapeShellArg processPattern} 2>/dev/null \
             || true
         )"
 
