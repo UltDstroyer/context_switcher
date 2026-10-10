@@ -138,46 +138,10 @@ handle_command() {
       local checkpoint_error
       if checkpoint_error="$(checkpoint "$arg1" 2>&1)"; then
         printf 'OK\n'
+      elif [[ -n "$checkpoint_error" ]]; then
+        printf 'ERR checkpoint failed: %s\n' "$checkpoint_error"
       else
-        checkpoint_error="${checkpoint_error//
-    STATUS)
-      if [[ -f "$MONITORING_FILE" ]]; then
-        printf 'monitoring\t%s\n' "$(cat "$MONITORING_FILE")"
-      else
-        printf 'stopped\n'
-      fi
-      ;;
-    *)
-      printf 'ERR unknown command\n'
-      ;;
-  esac
-}
-
-if [[ "${1:-}" == "--handle-client" ]]; then
-  handle_command
-  exit 0
-fi
-
-command -v socat >/dev/null 2>&1 || {
-  printf 'ctxd: socat is required\n' >&2
-  exit 1
-}
-command -v jq >/dev/null 2>&1 || {
-  printf 'ctxd: jq is required\n' >&2
-  exit 1
-}
-
-rm -f "$SOCKET"
-trap 'rm -f "$SOCKET"' EXIT INT TERM
-
-SELF="$(readlink -f "$0")"
-exec socat UNIX-LISTEN:"$SOCKET",fork,mode=600 EXEC:"$SELF --handle-client"
-\\n'/; }"
-        if [[ -n "$checkpoint_error" ]]; then
-          printf 'ERR checkpoint failed: %s\n' "$checkpoint_error"
-        else
-          printf 'ERR checkpoint failed\n'
-        fi
+        printf 'ERR checkpoint failed\n'
       fi
       ;;
     STATUS)
