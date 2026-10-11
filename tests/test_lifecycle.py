@@ -57,6 +57,14 @@ printf '%s\n' "$*" >> "$TEST_LOG"
     def events(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
+    def test_context_shorthand_switch_exit_and_list(self):
+        self.run_ctx("s", "work")
+        self.assertEqual(self.current(), "work")
+        listed = self.run_ctx("l")
+        self.assertIn("work", listed.stdout)
+        self.run_ctx("x")
+        self.assertIsNone(self.current())
+
     def test_switch_order_and_same_context_noop(self):
         self.run_ctx("switch", "minecraft")
         before = self.events()
