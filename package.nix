@@ -27,11 +27,12 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p "$out/bin"
+    mkdir -p "$out/bin" "$out/share/bash-completion/completions"
 
     install -m 0755 src/ctx "$out/bin/ctx"
     install -m 0755 src/ctxd "$out/bin/ctxd"
     install -m 0755 src/ctxdctl "$out/bin/ctxdctl"
+    install -m 0644 src/ctx-completion.bash "$out/share/bash-completion/completions/ctx"
 
     runtimePath="$out/bin:${lib.makeBinPath [
       bash
