@@ -18,12 +18,12 @@ class CompletionTests(unittest.TestCase):
         (self.cfg / "projects").mkdir(parents=True)
         (self.cfg / "archived").mkdir(parents=True)
         for slug in ("mm", "school", "work"):
-            (self.cfg / "projects" / f"{slug}.conf").write_text(f"name={slug}\\n")
-        (self.cfg / "archived" / "old.conf").write_text("name=old\\n")
+            (self.cfg / "projects" / f"{slug}.conf").write_text(f"name={slug}\n")
+        (self.cfg / "archived" / "old.conf").write_text("name=old\n")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         plugin = self.bin / "ctx-ext-hello"
-        plugin.write_text("#!/usr/bin/env bash\\nexit 0\\n")
+        plugin.write_text("#!/usr/bin/env bash\nexit 0\n")
         plugin.chmod(0o755)
         self.env = dict(
             os.environ,
@@ -34,11 +34,11 @@ class CompletionTests(unittest.TestCase):
     def complete(self, *words):
         quoted = " ".join(repr(w) for w in words)
         script = (
-            f"source {COMPLETION!s}\\n"
-            f"COMP_WORDS=({quoted})\\n"
-            "COMP_CWORD=$((${#COMP_WORDS[@]} - 1))\\n"
-            "_ctx_completion\\n"
-            "printf '%s\\\\n' \"${COMPREPLY[@]}\"\\n"
+            f"source {COMPLETION!s}\n"
+            f"COMP_WORDS=({quoted})\n"
+            "COMP_CWORD=$((${#COMP_WORDS[@]} - 1))\n"
+            "_ctx_completion\n"
+            "printf '%s\\n' \"${COMPREPLY[@]}\"\n"
         )
         result = subprocess.run(
             ["bash", "-c", script],
