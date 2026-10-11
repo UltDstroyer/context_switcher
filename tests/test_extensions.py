@@ -59,6 +59,20 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(self.observed(), ["1", "research", str(self.config),
                                            "mode", "quiet"])
 
+    def test_agent_shorthand_namespace_expands_subcommands(self):
+        for short, long_name in (("p", "plan"), ("g", "progress"),
+                                 ("d", "deviation"), ("a", "approve"),
+                                 ("x", "reject")):
+            with self.subTest(short=short):
+                self.ctx("a", short, "extra")
+                self.assertEqual(self.observed(),
+                                 ["1", "research", str(self.config),
+                                  long_name, "extra"])
+
+    def test_bare_agent_shorthand_dispatches_agent_extension(self):
+        self.ctx("a")
+        self.assertEqual(self.observed(), ["1", "research", str(self.config)])
+
     def test_extension_works_without_context(self):
         (self.config / "state" / "current").unlink()
         self.ctx("hello", "ping")

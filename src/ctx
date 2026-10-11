@@ -363,6 +363,21 @@ cmd_unarchive() {
 usage() {
   cat <<'EOF'
 Usage:
+  ctx n [name]                          New context
+  ctx s <context>                       Switch context
+  ctx x                                 Exit current context
+  ctx l [--archived|--all]              List contexts
+  ctx d <context>                       Delete context
+  ctx arc <context>                     Archive context
+  ctx unarc <context>                   Unarchive context
+
+  ctx a p "goal"                        Agent plan
+  ctx a g                               Agent progress
+  ctx a d                               Agent deviation
+  ctx a a                               Agent approve
+  ctx a x                               Agent reject
+
+Long forms:
   ctx new [name]
   ctx list [--archived|--all]
   ctx current
@@ -380,11 +395,11 @@ EOF
 }
 
 case "${1:-}" in
-  new)
+  new|n)
     shift
     cmd_new "$@"
     ;;
-  list)
+  list|l)
     shift
     cmd_list "${1:-active}"
     ;;
@@ -399,7 +414,7 @@ case "${1:-}" in
     shift
     cmd_edit "${1:-}"
     ;;
-  switch|use)
+  switch|use|s)
     [[ -n "${2:-}" ]] || die "usage: ctx switch <context>"
     switch_context "$2"
     ;;
@@ -410,16 +425,32 @@ case "${1:-}" in
   extensions)
     cmd_extensions
     ;;
-  exit|leave)
+  a)
+    shift
+    agent_command="${1:-}"
+    case "$agent_command" in
+      p) agent_command=plan ;;
+      g) agent_command=progress ;;
+      d) agent_command=deviation ;;
+      a) agent_command=approve ;;
+      x) agent_command=reject ;;
+    esac
+    if [[ -n "$agent_command" ]]; then
+      shift
+      set -- "$agent_command" "$@"
+    fi
+    extension_dispatch agent "$@"
+    ;;
+  exit|leave|x)
     cmd_exit
     ;;
-  delete|rm)
+  delete|rm|d)
     cmd_delete "${2:-}"
     ;;
-  archive)
+  archive|arc)
     cmd_archive "${2:-}"
     ;;
-  unarchive)
+  unarchive|unarc)
     cmd_unarchive "${2:-}"
     ;;
   -h|--help|help|"")
