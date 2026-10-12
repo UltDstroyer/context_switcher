@@ -37,20 +37,35 @@ capture_processes() {
 }
 
 capture_adapters() {
-  local tmp
+  local tmp exe key output next dir path
+  local -a path_dirs=()
+  local -A seen=()
   tmp="$(mktemp)"
   printf '{}' > "$tmp"
 
-  local exe key output next
-  while IFS= read -r exe; do
-    [[ -n "$exe" ]] || continue
-    key="${exe#ctx-capture-}"
-    if output="$("$exe" 2>/dev/null)" && jq -e . >/dev/null 2>&1 <<<"$output"; then
-      next="$(mktemp)"
-      jq --arg k "$key" --argjson v "$output" '. + {($k): $v}' "$tmp" > "$next"
-      mv "$next" "$tmp"
-    fi
-  done < <(compgen -c 'ctx-capture-' | sort -u || true)
+  # Scan executable PATH entries instead of relying on shell completion builtins.
+  # The daemon may run with a different Bash environment than the user's shell.
+  IFS=: read -r -a path_dirs <<< "${PATH:-}"
+  for dir in "${path_dirs[@]}"; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    for path in "$dir"/ctx-capture-*; do
+      [[ -f "$path" && -x "$path" ]] || continue
+      exe="${path##*/}"
+      key="${exe#ctx-capture-}"
+      [[ -n "$key" && -z "${seen[$exe]+present}" ]] || continue
+      seen["$exe"]=1
+
+      # Invalid or failing adapters must not prevent a context from exiting.
+      if output="$("$path" 2>/dev/null)" && jq -e . >/dev/null 2>&1 <<< "$output"; then
+        next="$(mktemp)"
+        if jq --arg k "$key" --argjson v "$output" '. + {($k): $v}' "$tmp" > "$next"; then
+          mv "$next" "$tmp"
+        else
+          rm -f "$next"
+        fi
+      fi
+    done
+  done
 
   cat "$tmp"
   rm -f "$tmp"
@@ -91,14 +106,29 @@ checkpoint() {
   adapters="$(capture_adapters)"
   updates="$(live_updates_json)"
 
-  jq -n     --arg context "$slug"     --arg captured_at "$(date --iso-8601=seconds)"     --argjson windows "$windows"     --argjson processes "$processes"     --argjson adapters "$adapters"     --argjson updates "$updates"     '{
+  # A failed capture must never leave behind a partial snapshot.
+  local snapshot_tmp
+  snapshot_tmp="$(mktemp "$dest/.snapshot.XXXXXX")" || return 1
+  if jq -n \
+    --arg context "$slug" \
+    --arg captured_at "$(date --iso-8601=seconds)" \
+    --argjson windows "$windows" \
+    --argjson processes "$processes" \
+    --argjson adapters "$adapters" \
+    --argjson updates "$updates" \
+    '{
       context: $context,
       captured_at: $captured_at,
       windows: $windows,
       processes: $processes,
       adapters: $adapters,
       live_updates: $updates
-    }' > "$dest/snapshot.json"
+    }' > "$snapshot_tmp"; then
+    mv -f "$snapshot_tmp" "$dest/snapshot.json"
+  else
+    rm -f "$snapshot_tmp"
+    return 1
+  fi
 }
 
 handle_command() {
